@@ -113,6 +113,9 @@ class smart_meter_data:
     def __init__(self, logger = None):
         self.logger = logger
         self.current_directory = os.path.dirname(os.path.realpath(__file__))
+        self.output_directory = os.path.join(self.current_directory, 'output')
+        self.data_directory = os.path.join(self.current_directory, 'data')
+        self.halfhourly_dataset_feather = os.path.join(self.data_directory, 'half_hour_dataset.feather')
 
     def download_data(self):
         '''
@@ -123,6 +126,7 @@ class smart_meter_data:
         self.blocks = os.listdir(self.block_path)
         df = pd.concat([pd.read_csv(os.path.join(self.block_path,block), parse_dates=['tstp'], index_col = ['tstp','LCLid']) 
                 for block in self.blocks])
+        df.to_feather(self.halfhourly_dataset_feather)
         hourly_weather = pd.read_csv(os.path.join(data_root, "weather_hourly_darksky.csv"))
         daily_weather  = pd.read_csv(os.path.join(data_root, "weather_daily_darksky.csv"))
         house          = pd.read_csv(os.path.join(data_root, "informations_households.csv"))
