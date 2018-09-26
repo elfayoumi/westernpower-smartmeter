@@ -173,7 +173,7 @@ class smart_meter_data:
     
     @staticmethod
     def convert_time_cols(data_frame, column_name):
-        data_frame[column_name+ "_mod"] = data_frame[column_name].apply(lambda x: smart_meter_data.minute_of_day(x, formatstr='%Y-%m-%d %H:%M:%S', stripChars=0) )
+        data_frame[column_name+ "_mod"] = data_frame[column_name].apply(lambda x: smart_meter_data.minute_of_day(x) )
 
     def persist_bcolz(self, chunk_number, data, processed_data_dir):
         if chunk_number == 0:
@@ -229,8 +229,8 @@ class smart_meter_data:
       
 
         self.daily_weather['month']= pd.DatetimeIndex(self.daily_weather['time'].values).month
-        # for c in ['temperatureMinTime', 'temperatureMaxTime', 'apparentTemperatureMinTime','apparentTemperatureMaxTime','temperatureHighTime','temperatureLowTime','apparentTemperatureHighTime','apparentTemperatureLowTime','sunsetTime','sunriseTime','uvIndexTime']:
-        #     self.convert_time_cols(self.daily_weather, c)
+        for c in ['temperatureMinTime', 'temperatureMaxTime', 'apparentTemperatureMinTime','apparentTemperatureMaxTime','temperatureHighTime','temperatureLowTime','apparentTemperatureHighTime','apparentTemperatureLowTime','sunsetTime','sunriseTime','uvIndexTime']:
+            self.convert_time_cols(self.daily_weather, c)
         self.daily_weather['date'] = self.daily_weather['temperatureMinTime'].dt.date
         self.daily_weather.fillna(method='ffill', inplace=True)    
         for i, block in enumerate (BLOCKS):
