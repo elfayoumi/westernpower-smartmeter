@@ -3,3 +3,4 @@ smart-meters-in-london/*
 logging/*
 .vscode/*
 /data/*
+nn_input.csv
