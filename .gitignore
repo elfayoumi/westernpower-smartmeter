@@ -3,3 +3,6 @@ smart-meters-in-london/*
 logging/*
 .vscode/*
 /data/*
+.Rproj.user
+/.RDataTmp
+/.Rhistory
