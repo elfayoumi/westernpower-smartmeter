@@ -5,4 +5,7 @@ logging/*
 /data/*
 .Rproj.user
 /.RDataTmp
+nn_input.csv
+__pycache__/
 /.Rhistory
+*.orig
