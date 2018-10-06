@@ -4,3 +4,4 @@ logging/*
 .vscode/*
 /data/*
 nn_input.csv
+__pycache__/
