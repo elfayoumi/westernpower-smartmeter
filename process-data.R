@@ -23,6 +23,7 @@ library(feather)
 library(doParallel)
 library(parallel)
 library(foreach)
+library(moments)
 # Calculate the number of cores
 no_cores <- max(7, detectCores() - 1)
 registerDoParallel(no_cores)
@@ -67,9 +68,9 @@ hhblock.data <- foreach(i = hhblock.files, .combine = rbind) %dopar%
 
 hhblock.data <- setDT(hhblock.data)
 glimpse(hhblock.data)
-us_bank_holidays = read.csv('data/uk_bank_holidays.csv', sep=',', stringsAsFactors = F)
-us_bank_holidays$Bank.holidays = as.POSIXct(us_bank_holidays$Bank.holidays)
-glimpse(us_bank_holidays)
+uk_bank_holidays = read.csv('data/uk_bank_holidays.csv', sep=',', stringsAsFactors = F)
+uk_bank_holidays$Bank.holidays = as.POSIXct(us_bank_holidays$Bank.holidays)
+glimpse(uk_bank_holidays)
 
 weather_daily_darksky = read.csv('data/weather_daily_darksky.csv', sep=',', stringsAsFactors = F)
 date_time_fields = c("temperatureMaxTime", "temperatureMinTime", "apparentTemperatureMinTime", "apparentTemperatureHighTime","time", "sunsetTime",
@@ -80,7 +81,7 @@ weather_daily_darksky$uvIndexTime[weather_daily_darksky$uvIndexTime == ''] = wea
 
 t = foreach(d = date_time_fields) %do%
 {
-  weather_daily_darksky[,d] = as.POSIXct(weather_daily_darksky[,d])
+  weather_daily_darksky[,d] =  as.POSIXct(weather_daily_darksky[,d])
   NULL
 }
 
@@ -112,17 +113,82 @@ acorn = read.csv('data/acorn_details.csv')
 
 get_summary <- function(v, tstp)
 {
+  l = as.list(numeric(3))
   v = as.numeric(v)
-  v = v[v>0]
+  l[3]= as.integer(24)
   
-  l = list(mean(v,na.rm=T), median(v,na.rm=T), sd(v,na.rm=T), max(v,na.rm=T), min(v,na.rm=T), NROW(v), sum(v, na.rm=T))
+  if(!purrr::is_empty(v[v>0]))
+  {
+    max.usage.index = which(v == max(v[v>0]))
+    max.usage = as.integer(hour(tstp[max.usage.index]))
+  
+    v = v[v>0]
+    
+    l = list(skewness(v, na.rm=T),
+             kurtosis(v, na.rm=T),
+             max.usage)
+    
+  }
+  
   return (l)
 }
+get.summary = cmpfun(get_summary)
 
-daily.data.mo = halfhourly.data[,get_summary(`energy(kWh/hh)`, tstp), by=list(LCLid, Date)]
+daily.data.mo = halfhourly.data[,get.summary(`energy(kWh/hh)`, tstp), by=list(LCLid, Date)]
+daily.data.mo$V3 = as.factor(daily.data.mo$V3)
+names(daily.data.mo) = c('LCLid', 'Date', 'energy_skewness', "energy_kurtosis", 'energey_max_usage_hour')
+glimpse(daily.data.mo)
 
 d = daily.data
-d$day = as.Date(d$day) + days(1)
+d$day = as.Date(d$day)
 ss = d %>% inner_join(daily.data.mo, by = c('LCLid' = 'LCLid', 'day' = 'Date'))    
 
 glimpse(ss)
+
+glimpse(weather_hourly_darksky)
+weather_hourly_darksky$Date = as.Date(weather_hourly_darksky$time)
+
+weather_summary <- function(temperature)
+{
+  l = list(skewness(temperature), kurtosis(temperature))
+  l
+}
+weather.summary = cmpfun(weather_summary)
+
+weather_sum = weather_hourly_darksky[, weather.summary(temperature), by=Date]
+names(weather_sum) = c('Date', 'temperature_skewness', 'temperature_kurtosis')
+glimpse(weather_daily_darksky)
+weather_daily_darksky$time = as.Date(weather_daily_darksky$time)
+weather_daily = weather_daily_darksky %>% inner_join(weather_sum, by=c('time' = 'Date')) %>% 
+  mutate(day_length = as.numeric(difftime(sunsetTime, sunriseTime), units = "secs")/(24.0*60*60))
+
+date_time_fields = c("temperatureMaxTime", "temperatureMinTime", "apparentTemperatureMinTime", "apparentTemperatureHighTime","sunsetTime",
+                     "uvIndexTime"  ,"sunriseTime","temperatureHighTime", "temperatureLowTime",  "apparentTemperatureMaxTime",
+                     "apparentTemperatureLowTime" )
+
+for(i in 1:NROW(date_time_fields))
+{
+  d = date_time_fields[i]
+  weather_daily[,gsub('Time', 'Hour', d)] = hour(weather_daily[,d])
+}
+weather_daily = weather_daily %>% select(-date_time_fields)
+glimpse(weather_daily)
+
+glimpse(house_hold_information)
+
+us_bank_holidays$Bank.holidays = as.Date(us_bank_holidays$Bank.holidays)
+
+total_data = ss %>% inner_join(weather_daily, by = c('day' = 'time' )) %>% inner_join(house_hold_information, by = 'LCLid') %>% select(-file) %>%
+  left_join(us_bank_holidays, by=c('day' = 'Bank.holidays')) %>% mutate(day.of.week = weekdays(day))
+
+
+glimpse(total_data)
+
+factor_files = c("energey_max_usage_hour", "icon", "temperatureMaxHour", "temperatureMinHour", "apparentTemperatureMinHour",
+                 "apparentTemperatureHighHour","sunsetHour", "uvIndexHour", "sunriseHour", "temperatureHighHour", "temperatureLowHour", "apparentTemperatureMaxHour",
+                 "apparentTemperatureLowHour", "stdorToU", "Acorn", "Acorn_grouped", "Type", "day.of.week")
+
+unique(total_data$Type)
+
+
+total_data$Type[is.na(total_data$Type) ] = 'Normal'
