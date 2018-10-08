@@ -60,7 +60,6 @@ dependencies:
   - jsonschema=2.6.0=py36_1
   - jupyter_client=5.2.3=py36_0
   - jupyter_core=4.4.0=py_0
-  - libiconv=1.15=0
   - libsodium=1.0.16=0
   - libwebp=0.5.2=7
   - markupsafe=1.0=py36_0
