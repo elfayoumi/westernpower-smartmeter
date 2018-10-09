@@ -22,7 +22,7 @@ logger.debug("--------------------STARTING CLIENT PROCESS-----------------------
 context = zmq.Context()
 logger.debug("Connecting to server...")
 socket = context.socket(zmq.REQ)
-socket.connect ("tcp://NETLB-2852e358413fd72e.elb.us-east-1.amazonaws.com:%s" % 5557)
+socket.connect("tcp://NETLB-2852e358413fd72e.elb.us-east-1.amazonaws.com:%s" % 5557)
 chunksize = 10000
 
 for i in range (0,len(test_set), chunksize):
@@ -40,5 +40,8 @@ for i in range (0,len(test_set), chunksize):
         logger.debug("response received with count " + str(len(message)))
 
 logger.debug("----------------------CLOSING CLIENT PROCESS-------------------------")
+
+
+
 socket.close()
 exit(0)
