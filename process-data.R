@@ -69,7 +69,7 @@ hhblock.data <- foreach(i = hhblock.files, .combine = rbind) %dopar%
 hhblock.data <- setDT(hhblock.data)
 glimpse(hhblock.data)
 uk_bank_holidays = read.csv('data/uk_bank_holidays.csv', sep=',', stringsAsFactors = F)
-uk_bank_holidays$Bank.holidays = as.POSIXct(us_bank_holidays$Bank.holidays)
+uk_bank_holidays$Bank.holidays = as.Date(uk_bank_holidays$Bank.holidays, formate='%Y-%m-%d')
 glimpse(uk_bank_holidays)
 
 weather_daily_darksky = read.csv('data/weather_daily_darksky.csv', sep=',', stringsAsFactors = F)
@@ -96,7 +96,7 @@ glimpse(weather_hourly_darksky)
 write_feather(daily.data, 'data/daily_data.feather')
 write_feather(halfhourly.data, 'data/halfhourly_data.feather')
 write_feather(hhblock.data, 'data/hhblock_data.feather')
-write_feather(us_bank_holidays, 'data/us_bank_holidays.feather')
+write_feather(uk_bank_holidays, 'data/uk_bank_holidays.feather')
 write_feather(weather_daily_darksky, 'data/weather_daily_darksky.feather')
 write_feather(weather_hourly_darksky, 'data/weather_hourly_darksky.feather')
 
@@ -104,7 +104,7 @@ write_feather(weather_hourly_darksky, 'data/weather_hourly_darksky.feather')
 daily.data = setDT( read_feather('data/daily_data.feather'))
 halfhourly.data = setDT( read_feather('data/halfhourly_data.feather'))
 hhblock.data = setDT( read_feather('data/hhblock_data.feather'))
-us_bank_holidays= setDT( read_feather('data/us_bank_holidays.feather'))
+uk_bank_holidays= setDT( read_feather('data/uk_bank_holidays.feather'))
 weather_daily_darksky = setDT( read_feather('data/weather_daily_darksky.feather'))
 weather_hourly_darksky = setDT( read_feather( 'data/weather_hourly_darksky.feather'))
 
@@ -169,26 +169,63 @@ date_time_fields = c("temperatureMaxTime", "temperatureMinTime", "apparentTemper
 for(i in 1:NROW(date_time_fields))
 {
   d = date_time_fields[i]
-  weather_daily[,gsub('Time', 'Hour', d)] = hour(weather_daily[,d])
+  weather_daily[,d] = hour(weather_daily[,d])
 }
 weather_daily = weather_daily %>% select(-date_time_fields)
 glimpse(weather_daily)
 
 glimpse(house_hold_information)
 
-us_bank_holidays$Bank.holidays = as.Date(us_bank_holidays$Bank.holidays)
 
 total_data = ss %>% inner_join(weather_daily, by = c('day' = 'time' )) %>% inner_join(house_hold_information, by = 'LCLid') %>% select(-file) %>%
-  left_join(us_bank_holidays, by=c('day' = 'Bank.holidays')) %>% mutate(day.of.week = weekdays(day))
+  mutate(day.of.week = weekdays(day))
 
 
 glimpse(total_data)
 
-factor_files = c("energey_max_usage_hour", "icon", "temperatureMaxHour", "temperatureMinHour", "apparentTemperatureMinHour",
-                 "apparentTemperatureHighHour","sunsetHour", "uvIndexHour", "sunriseHour", "temperatureHighHour", "temperatureLowHour", "apparentTemperatureMaxHour",
-                 "apparentTemperatureLowHour", "stdorToU", "Acorn", "Acorn_grouped", "Type", "day.of.week")
+factor_fields = c( "icon", "stdorToU", "Acorn", "Acorn_grouped", "Type", "day.of.week", 'precipType',  'summary', 'before_holiday', 'after_holiday', 'month', 'year')
 
-unique(total_data$Type)
 
+
+
+
+total_data = read_feather('data/total_data.feather')
+
+time.periods = unique(total_data$day)
+
+get.before.days = function(date)
+{
+  d =  days(uk_bank_holidays$Bank.holidays-date)$day
+  
+  u =  min(5,d[d>=0])
+  u
+}
+
+get.after.days = function(date)
+{
+  d =  days(date  - uk_bank_holidays$Bank.holidays)$day
+  
+  u =  min(5,d[d>=0])
+  u
+}
+
+get.days.before = Vectorize(get.before.days)
+get.days.after = Vectorize(get.after.days)
+
+uk.holidays = data.frame(Date = time.periods) %>% left_join(uk_bank_holidays, by=c('Date' = 'Bank.holidays'))
+uk.holidays$before_holiday = get.days.before(uk.holidays$Date)
+uk.holidays$after_holiday = get.days.after(uk.holidays$Date)
+
+total_data <- total_data %>% left_join(uk.holidays, by = c('day' = 'Date'))
 
 total_data$Type[is.na(total_data$Type) ] = 'Normal'
+for(i in 1:NROW(factor_fields))
+{
+  d = factor_fields[i]
+  total_data[,d] = as.factor(data[,d])
+}
+ total_data = total_data %>% mutate(month = month(day), year = year(day))
+
+glimpse(total_data)
+
+write_feather(total_data, 'data/total_data.feather')

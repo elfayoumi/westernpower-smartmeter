@@ -9,3 +9,4 @@ nn_input.csv
 __pycache__/
 /.Rhistory
 *.orig
+.RData
