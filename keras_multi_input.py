@@ -1,4 +1,3 @@
-from platypus import NSGAII, Problem, Real, NSGAIII
 import pandas as pd
 import numpy as np
 from random import sample, randint
@@ -7,7 +6,6 @@ from pathlib import Path
 import itertools
 from sklearn.preprocessing import StandardScaler
 import logging
-import  mysql.connector
 from datetime import timedelta
 import datetime
 import matplotlib.pyplot as plt
@@ -15,8 +13,6 @@ plt.switch_backend('agg')
 import smtplib
 import talib
 import matplotlib as mpl
-import imghdr
-import multiprocessing
 from joblib import Parallel, delayed
 # Import the email modules we'll need
 from sklearn.base import BaseEstimator, ClassifierMixin
