@@ -1,6 +1,4 @@
-from keras.models import Sequential, Model
-from keras import layers
-from keras import Input
+from platypus import NSGAII, Problem, Real, NSGAIII
 import pandas as pd
 import numpy as np
 from random import sample, randint
@@ -12,19 +10,283 @@ import logging
 import  mysql.connector
 from datetime import timedelta
 import datetime
-from keras.optimizers import Adam, Adadelta, SGD
-from keras.callbacks import ModelCheckpoint
 import matplotlib.pyplot as plt
-from keras.layers.core import Dense, Activation, Dropout
-from pandas_ml import ConfusionMatrix
-# import BatchNormalization
-from keras.layers.normalization import BatchNormalization
-from fastai.structured import proc_df
-from keras import regularizers
+plt.switch_backend('agg')
+import smtplib
+import talib
+import matplotlib as mpl
+import imghdr
+import multiprocessing
+from joblib import Parallel, delayed
+# Import the email modules we'll need
 from sklearn.base import BaseEstimator, ClassifierMixin
+from email.message import EmailMessage
+from pandas_ml import ConfusionMatrix
+from tpot.builtins import StackingEstimator
+from sklearn.model_selection import train_test_split
+import xgboost
+from sklearn_pandas import DataFrameMapper
+from sklearn.pipeline import make_pipeline, make_union
+from tpot.builtins import StackingEstimator
+from xgboost import XGBClassifier
+from pandas.api.types import is_string_dtype, is_numeric_dtype
+from tpot import TPOTClassifier
+import IPython, graphviz, sklearn_pandas, sklearn, warnings, pdb
+from sklearn.ensemble import ExtraTreesClassifier
+from sklearn.feature_selection import RFE
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import make_pipeline
 
-class KerasMultiInput:
-    N_CAT = 3
+
+def numericalize(df, col, name, max_n_cat):
+    """ Changes the column col from a categorical type to it's integer codes.
+
+    Parameters:
+    -----------
+    df: A pandas dataframe. df[name] will be filled with the integer codes from
+        col.
+
+    col: The column you wish to change into the categories.
+    name: The column name you wish to insert into df. This column will hold the
+        integer codes.
+
+    max_n_cat: If col has more categories than max_n_cat it will not change the
+        it to its integer codes. If max_n_cat is None, then col will always be
+        converted.
+
+    Examples:
+    ---------
+    >>> df = pd.DataFrame({'col1' : [1, 2, 3], 'col2' : ['a', 'b', 'a']})
+    >>> df
+       col1 col2
+    0     1    a
+    1     2    b
+    2     3    a
+
+    note the type of col2 is string
+
+    >>> train_cats(df)
+    >>> df
+
+       col1 col2
+    0     1    a
+    1     2    b
+    2     3    a
+
+    now the type of col2 is category { a : 1, b : 2}
+
+    >>> numericalize(df, df['col2'], 'col3', None)
+
+       col1 col2 col3
+    0     1    a    1
+    1     2    b    2
+    2     3    a    1
+    """
+    if not is_numeric_dtype(col) and ( max_n_cat is None or col.nunique()>max_n_cat):
+        df[name] = col.cat.codes+1
+
+def scale_vars(df, mapper):
+    warnings.filterwarnings('ignore', category=sklearn.exceptions.DataConversionWarning)
+    if mapper is None:
+        map_f = [([n],StandardScaler()) for n in df.columns if is_numeric_dtype(df[n])]
+        mapper = DataFrameMapper(map_f).fit(df)
+    df[mapper.transformed_names_] = mapper.transform(df)
+    return mapper
+
+def fix_missing(df, col, name, na_dict):
+    """ Fill missing data in a column of df with the median, and add a {name}_na column
+    which specifies if the data was missing.
+
+    Parameters:
+    -----------
+    df: The data frame that will be changed.
+
+    col: The column of data to fix by filling in missing data.
+
+    name: The name of the new filled column in df.
+
+    na_dict: A dictionary of values to create na's of and the value to insert. If
+        name is not a key of na_dict the median will fill any missing data. Also
+        if name is not a key of na_dict and there is no missing data in col, then
+        no {name}_na column is not created.
+
+
+    Examples:
+    ---------
+    >>> df = pd.DataFrame({'col1' : [1, np.NaN, 3], 'col2' : [5, 2, 2]})
+    >>> df
+       col1 col2
+    0     1    5
+    1   nan    2
+    2     3    2
+
+    >>> fix_missing(df, df['col1'], 'col1', {})
+    >>> df
+       col1 col2 col1_na
+    0     1    5   False
+    1     2    2    True
+    2     3    2   False
+
+
+    >>> df = pd.DataFrame({'col1' : [1, np.NaN, 3], 'col2' : [5, 2, 2]})
+    >>> df
+       col1 col2
+    0     1    5
+    1   nan    2
+    2     3    2
+
+    >>> fix_missing(df, df['col2'], 'col2', {})
+    >>> df
+       col1 col2
+    0     1    5
+    1   nan    2
+    2     3    2
+
+
+    >>> df = pd.DataFrame({'col1' : [1, np.NaN, 3], 'col2' : [5, 2, 2]})
+    >>> df
+       col1 col2
+    0     1    5
+    1   nan    2
+    2     3    2
+
+    >>> fix_missing(df, df['col1'], 'col1', {'col1' : 500})
+    >>> df
+       col1 col2 col1_na
+    0     1    5   False
+    1   500    2    True
+    2     3    2   False
+    """
+    if is_numeric_dtype(col):
+        if pd.isnull(col).sum() or (name in na_dict):
+            df[name+'_na'] = pd.isnull(col)
+            filler = na_dict[name] if name in na_dict else col.median()
+            df[name] = col.fillna(filler)
+            na_dict[name] = filler
+    return na_dict
+def proc_df(df, y_fld=None, skip_flds=None, ignore_flds=None, do_scale=False, na_dict=None,
+            preproc_fn=None, max_n_cat=None, subset=None, mapper=None):
+    """ proc_df takes a data frame df and splits off the response variable, and
+    changes the df into an entirely numeric dataframe.
+
+    Parameters:
+    -----------
+    df: The data frame you wish to process.
+
+    y_fld: The name of the response variable
+
+    skip_flds: A list of fields that dropped from df.
+
+    ignore_flds: A list of fields that are ignored during processing.
+
+    do_scale: Standardizes each column in df. Takes Boolean Values(True,False)
+
+    na_dict: a dictionary of na columns to add. Na columns are also added if there
+        are any missing values.
+
+    preproc_fn: A function that gets applied to df.
+
+    max_n_cat: The maximum number of categories to break into dummy values, instead
+        of integer codes.
+
+    subset: Takes a random subset of size subset from df.
+
+    mapper: If do_scale is set as True, the mapper variable
+        calculates the values used for scaling of variables during training time (mean and standard deviation).
+
+    Returns:
+    --------
+    [x, y, nas, mapper(optional)]:
+
+        x: x is the transformed version of df. x will not have the response variable
+            and is entirely numeric.
+
+        y: y is the response variable
+
+        nas: returns a dictionary of which nas it created, and the associated median.
+
+        mapper: A DataFrameMapper which stores the mean and standard deviation of the corresponding continuous
+        variables which is then used for scaling of during test-time.
+
+    Examples:
+    ---------
+    >>> df = pd.DataFrame({'col1' : [1, 2, 3], 'col2' : ['a', 'b', 'a']})
+    >>> df
+       col1 col2
+    0     1    a
+    1     2    b
+    2     3    a
+
+    note the type of col2 is string
+
+    >>> train_cats(df)
+    >>> df
+
+       col1 col2
+    0     1    a
+    1     2    b
+    2     3    a
+
+    now the type of col2 is category { a : 1, b : 2}
+
+    >>> x, y, nas = proc_df(df, 'col1')
+    >>> x
+
+       col2
+    0     1
+    1     2
+    2     1
+
+    >>> data = DataFrame(pet=["cat", "dog", "dog", "fish", "cat", "dog", "cat", "fish"],
+                 children=[4., 6, 3, 3, 2, 3, 5, 4],
+                 salary=[90, 24, 44, 27, 32, 59, 36, 27])
+
+    >>> mapper = DataFrameMapper([(:pet, LabelBinarizer()),
+                          ([:children], StandardScaler())])
+
+    >>>round(fit_transform!(mapper, copy(data)), 2)
+
+    8x4 Array{Float64,2}:
+    1.0  0.0  0.0   0.21
+    0.0  1.0  0.0   1.88
+    0.0  1.0  0.0  -0.63
+    0.0  0.0  1.0  -0.63
+    1.0  0.0  0.0  -1.46
+    0.0  1.0  0.0  -0.63
+    1.0  0.0  0.0   1.04
+    0.0  0.0  1.0   0.21
+    """
+    if not ignore_flds: ignore_flds=[]
+    if not skip_flds: skip_flds=[]
+    if subset: df = get_sample(df,subset)
+    else: df = df.copy()
+    ignored_flds = df.loc[:, ignore_flds]
+    df.drop(ignore_flds, axis=1, inplace=True)
+    if preproc_fn: preproc_fn(df)
+    if y_fld is None: y = None
+    else:
+        if not is_numeric_dtype(df[y_fld]): df[y_fld] = df[y_fld].cat.codes
+        y = df[y_fld].values
+        skip_flds += [y_fld]
+    df.drop(skip_flds, axis=1, inplace=True)
+
+    if na_dict is None: na_dict = {}
+    else: na_dict = na_dict.copy()
+    na_dict_initial = na_dict.copy()
+    for n,c in df.items(): na_dict = fix_missing(df, c, n, na_dict)
+    if len(na_dict_initial.keys()) > 0:
+        df.drop([a + '_na' for a in list(set(na_dict.keys()) - set(na_dict_initial.keys()))], axis=1, inplace=True)
+    if do_scale: mapper = scale_vars(df, mapper)
+    for n,c in df.items(): numericalize(df, c, n, max_n_cat)
+    df = pd.get_dummies(df, dummy_na=True)
+    df = pd.concat([ignored_flds, df], axis=1)
+    res = [df, y, na_dict]
+    if do_scale: res = res + [mapper]
+    return res
+
+
+class KerasMultiInput(BaseEstimator, ClassifierMixin):
+
     DAYS_AHEAD = 5
     LAGGED_DAYS = 0
     VALID_DAYS = 20
@@ -61,11 +323,7 @@ class KerasMultiInput:
         self.log = logger
         self.current_directory = os.path.dirname(os.path.realpath(__file__))
         self.output_directory = os.path.join(self.current_directory,'data')
-        today_date = datetime.datetime.today().strftime('%Y%m%d')
-        self.pickle_filename1 = os.path.join(self.output_directory, f"{today_date}_view.pkl")
-        self.pickle_filename2 = os.path.join(self.output_directory, f"{today_date}_xjo.pkl")
-        self.fig_name = os.path.join( self.output_directory, 'histo.png')
-        self.feather_name = os.path.join( self.output_directory, f"{today_date}_xjo.feather")
+
         self.lr = lr
         self.name = 'keras_multiInput'
         self.data_dir = os.path.join(self.current_directory, 'data')
@@ -75,110 +333,39 @@ class KerasMultiInput:
         self.ts_scaler = StandardScaler(copy=True, with_mean=True, with_std=True)
         self.window_size = sequence_length
         self.l2_reg = l2_reg
-    def download_data(self):
-        try:
-            my_file = Path(self.pickle_filename1)
-            if my_file.is_file():
-                # file exists
-                index_prices = pd.read_pickle(self.pickle_filename1)                
-                
-            else:
-                cnx = mysql.connector.connect(user='ibrahim_', password='^a9_&kalman_', host='athe2014.il7ad.org', database="mystocks")
-                query =  """SELECT ip.`Timestamp`,  StatusXO, StatusBS,BP, `Open`, High, Low, `Close`  FROM mystocks.IndexBulishPercent  ibp 
-                            left join mystocks.IndexPrice ip on ibp.`Date` = ip.`Date` 
-                            where ibp.indexId = 10 and ip.indexid = 3 order by ip.`Date`"""
-                index_prices = pd.read_sql(query, con=cnx) #
-                index_prices['Timestamp'] =  pd.to_datetime(index_prices['Timestamp'])
-                index_prices = index_prices.set_index('Timestamp')
-                index_prices.to_pickle(self.pickle_filename1)
-                #drop duplicate
-                index_prices.drop_duplicates(inplace =True)
-                index_prices = index_prices[~index_prices.index.duplicated(keep='last')]
-                cnx.close()
-        
-            my_file = Path(self.pickle_filename2)
-            if my_file.is_file():
-                # file exists
-                xjo = pd.read_pickle(self.pickle_filename2)                
-                
-            else:
-                cnx = mysql.connector.connect(user='ibrahim_', password='^a9_&kalman_', host='athe2014.il7ad.org', database="mystocks")
-                query = "select * from `mystocks`.`IndexPrice` where IndexId = 3 order by `Date`"
-                xjo = pd.read_sql(query, con=cnx) #
-                xjo['Date'] =  pd.to_datetime(xjo['Date'], format='%Y%m%d')
-                xjo = xjo.set_index('Date')
-                xjo.to_pickle(self.pickle_filename2)
-                cnx.close()
-            
-
-            df = index_prices.fillna(method='ffill').reset_index()
-            df.to_feather(self.feather_name)
-            index_prices['day'] = index_prices.index.weekday
-            self.debug("\n{0}".format(index_prices.head()))
-            self.debug(f'There are: {len(index_prices)} rows')
-            self.xjo = xjo
-            return index_prices
-        except Exception as ex:
-            self.excption(ex)
-            raise ex
-
-
-    def find_categorical(self, X):
-        
+    
+    def find_categorical(self, X):        
         # Get list of categorical column names
-        self.categorical_columns = ['StatusXO', 'StatusBS', 'day']
-        self.debug(f"Columns found: {self.categorical_columns}")
+        self.categorical_columns = ['LCLid', "icon", "stdorToU", "Type", "day.of.week", 'precipType',  'summary', 'before_holiday', 'after_holiday', 'month', 'year']
         # Get list of non-categorical column names
-        self.non_categorical_columns = ['BP', 'Value', 'Low', 'High']   
-        #self.sequence_columns = ['Value']
+        self.non_categorical_columns =list(filter(lambda x: x not in self.categorical_columns, X.columns))
+        self.sequence_columns = ['energy_sum']
+        self.label_column = 'energy_sum'
 
     def create_dataset(self, df):
-        df['Value'] = (df["High"] + df["Low"])/2.0
-        y = df['Value']
-        ahead = y.shift(self.DAYS_AHEAD)
-        new_y = 100.0*(y/ahead-1)
-        quantiles = new_y.quantile(np.linspace(0,1,self.N_CAT+1))
-        self.info(f'The quantiles for fittings: {quantiles.values}')
-        quantiles.iloc[-1] += 1.0
-        quantiles.iloc[0] -= 1.0
-        y = []
-        for i in range(self.DAYS_AHEAD, len(new_y)):
-            t = new_y.iloc[i]
-            for j in range(1, self.N_CAT+1):
-                
-                if t >= quantiles.iloc[j-1] and t < quantiles.iloc[j]:
-                    y.append(j-1)
-        y = pd.DataFrame(y)
-        y['Timestmap'] = df.index[:-self.DAYS_AHEAD]
-        y = y.set_index('Timestmap')
-        y.columns = ['Value']
-        y = y['Value']
-
+        
+        y = df[self.label_column]
+        ahead = y.groupby(level = 0).shift(-self.DAYS_AHEAD)
+        df['Value'] = ahead.to_frame()
+        df = df.dropna()
         for v in self.categorical_columns:
             df[v] = df[v].astype('category').cat.as_ordered()
         for v in self.non_categorical_columns:
             df[v] = df[v].astype('float32')
 
-        df = df.fillna(method='ffill') #forward fill
-        df = df.fillna(method='bfill') #backward fill
-        #self.sequence_columns = ['Value']
-        
-
         self.cat_sz = [(c, len(df[c].cat.categories)+1) for c in self.categorical_columns]
         self.emb_szs = [(c, min(50, (c+1)//2)) for _,c in self.cat_sz]
-        df, _, self.nas, self.mapper = proc_df(df,  do_scale=True)
+        df, y, self.nas, self.mapper = proc_df(df, y_fld='Value',  do_scale=True)
         df = df[self.categorical_columns + self.non_categorical_columns ]
         self.info(df.dtypes)
+        self.df = df
+        self.y = self.ts_scaler.fit_transform(y.reshape(-1,1))
         self.ts = self.window_transform_series(self.window_size,df.index)
-        #df[:max(y.index)].boxplot(by=y.values[:], column=['BP'])
-        #plt.show()
+        
         return (df,y.astype('int') )
     def window_transform_series(self,window_size, index):
-        t = (self.xjo['High'] + self.xjo['Low'])/2.0
-        t =self.ts_scaler.fit_transform(t.values.reshape(-1,1))
-        v = pd.DataFrame(t[:,0])
-        v['Timestamp'] = self.xjo.index
-        v = v.set_index('Timestamp')
+        
+        v = pd.DataFrame(self.y, index = index, columns=['Value'])
         
         # x values ends 1 before the end
         X = []
@@ -293,91 +480,6 @@ class KerasMultiInput:
         plt.show()
         #plt.savefig(file_name)
 
-
-class KerasMultiInputFitter(BaseEstimator, ClassifierMixin):
-    N_CAT = 3
-    DAYS_AHEAD = 5
-    LAGGED_DAYS = 0
-    VALID_DAYS = 20
-    def __init__(self, logger = None, verbose=1, batch_size=128, epochs=200,lr = 0.001, sequence_length= 20,l2_reg= 0.01):
-        """
-            Called when initializing the classifier
-        """
-        self.log = logger
-        self.current_directory = os.path.dirname(os.path.realpath(__file__))
-        self.output_directory = os.path.join(self.current_directory,'data')
-        today_date = datetime.datetime.today().strftime('%Y%m%d')
-        self.pickle_filename1 = os.path.join(self.output_directory, f"{today_date}_view.pkl")
-        self.pickle_filename2 = os.path.join(self.output_directory, f"{today_date}_xjo.pkl")
-        self.fig_name = os.path.join( self.output_directory, 'histo.png')
-        self.feather_name = os.path.join( self.output_directory, f"{today_date}_xjo.feather")
-        self.lr = lr
-        self.name = 'keras_multiInput'
-        self.data_dir = os.path.join(self.current_directory, 'data')
-        self.batch_size = batch_size
-        self.epochs = epochs
-        self.verbose = verbose        
-        self.window_size = sequence_length
-        self.l2_reg = l2_reg
-        self.find_categorical()
-
-    def find_categorical(self):
-        
-        # Get list of categorical column names
-        self.categorical_columns = ['StatusXO', 'StatusBS', 'day']
-        # Get list of non-categorical column names
-        self.non_categorical_columns = ['AXVI', 'SKEW', 'ISEE', 'aaii_bulish', 'aaii_bearish', 'BP', 'Value', 'Low', 'High']   
-        #self.sequence_columns = ['Value']
-    def model_setup(self):
-        cat_input = [Input(shape=(1,), dtype='int32', name=c) for c in self.categorical_columns]
-        all_layers = []
-        
-        for i in range(len(cat_input)):
-            emb = layers.Embedding(self.emb_szs[i][0], self.emb_szs[i][1])(cat_input[i])
-            flat = layers.Flatten()(emb)
-            all_layers.append(flat)
-
-        contInput = Input(shape=(len(self.non_categorical_columns),), dtype='float32', name='continuouse')
-        all_layers.append(contInput)
-        lay = layers.concatenate(all_layers, axis =-1)
-        #lay = BatchNormalization()(lay)
-        lay = Dense(128, activation='tanh', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
-        lay = Dense(64, activation='relu', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
-        lay = Dense(32, activation='relu', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
-        #lay = BatchNormalization()(lay)
-        answer = layers.Dense(KerasMultiInputFitter.N_CAT, activation='softmax')(lay)
-        inputs_all = cat_input
-        inputs_all.append(contInput)
-        self.model = Model(inputs_all, answer)
-        self.log.info(self.model.summary())
-        adam = Adam(lr=self.lr)
-        self.model.compile(loss="sparse_categorical_crossentropy", optimizer=adam,metrics=['accuracy'])
-
-    
-    def fit(self, X, y=None):
-        """
-        This should fit classifier. All the "work" should be done here.
-
-        Note: assert is not a good choice here and you should rather
-        use try/except blog with exceptions. This is just for short syntax.
-        """
-        try:
-            #X = pd.DataFrame(X, columns=['StatusXO', 'StatusBS', 'day', 'BP', 'Value', 'Low', 'High'])
-            self.cat_sz = [(c, len(set(X[c]))+1) for c in self.categorical_columns]
-            self.emb_szs = [(c, min(50, (c+1)//2)) for _,c in self.cat_sz]
-
-            self.model_setup()
-            train_values = {c:X[c] for c in self.categorical_columns}
-            train_values['continuouse'] = X[self.non_categorical_columns]
-            
-            self.model.fit(train_values, y, epochs=self.epochs, batch_size = self.batch_size,
-                                        #validation_data=(val_values, self.y_vali
-                                        verbose=self.verbose)
-
-        except Exception as ex:
-            self.log.exception(ex)
-        return self
-
     def _meaning(self, x):
         # returns True/False according to fitted classifier
         # notice underscore on the beginning
@@ -404,10 +506,12 @@ class KerasMultiInputFitter(BaseEstimator, ClassifierMixin):
         p = sum(np.equal(y.values[:].reshape(-1),  self.predict(X).reshape(-1)))/len(y)
         return(p) 
 
-
 if __name__ == "__main__":
+    current_directory = os.path.dirname(os.path.realpath(__file__))
     log_file = os.path.join(current_directory, 'data/wp.log')
-    feather_file = os.path.join(current_directory, 'data/total_data.feather')
+    feather_file = os.path.join(current_directory, 'data/total_data_filled.feather')
+    df = pd.read_feather(feather_file)
+    df = df.set_index([ 'index', 'day'])
 
     # read in the prepared data set
     logger = logging.getLogger('wp')
@@ -423,4 +527,25 @@ if __name__ == "__main__":
     # add the handlers to the logger
     logger.addHandler(fh)
     logger.addHandler(ch)
-    keras_multinput = KerasMultiInput(logger=logger)
+    # date_fields = ["temperatureMaxTime", "temperatureMinTime", "apparentTemperatureMinTime",
+    #                 "apparentTemperatureHighTime","sunsetTime", "uvIndexTime"  ,"sunriseTime","temperatureHighTime", "temperatureLowTime", 
+    #                  "apparentTemperatureMaxTime",
+    #                  "apparentTemperatureLowTime"]
+
+    # for date_field in date_fields:
+    #     name = date_field.replace('Time', 'Hour')
+    #     df[name] = df[date_field].apply(lambda x: x.hour)
+    df = df.drop(['Acorn', 'Acorn_grouped', 'energy_count', "temperatureMaxTime", "temperatureMinTime", "apparentTemperatureMinTime",
+                    "apparentTemperatureHighTime","sunsetTime", "uvIndexTime"  ,"sunriseTime","temperatureHighTime", "temperatureLowTime", 
+                     "apparentTemperatureMaxTime",
+                     "apparentTemperatureLowTime"], axis = 1)
+    
+    logger.info(df.head())
+    try:
+        keras_multinput = KerasMultiInput(logger=logger)
+        keras_multinput.find_categorical(df)
+        keras_multinput.create_dataset(df)
+    except Exception as ex:
+        logger.exception(ex)
+    finally:
+        logger.handlers = []
