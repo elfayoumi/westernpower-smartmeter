@@ -14,6 +14,8 @@ import smtplib
 import talib
 import matplotlib as mpl
 from joblib import Parallel, delayed
+import  warnings,sklearn
+import pickle
 # Import the email modules we'll need
 from sklearn.base import BaseEstimator, ClassifierMixin
 from email.message import EmailMessage
@@ -27,12 +29,13 @@ from tpot.builtins import StackingEstimator
 from xgboost import XGBClassifier
 from pandas.api.types import is_string_dtype, is_numeric_dtype
 from tpot import TPOTClassifier
-import IPython, graphviz, sklearn_pandas, sklearn, warnings, pdb
 from sklearn.ensemble import ExtraTreesClassifier
 from sklearn.feature_selection import RFE
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import make_pipeline
-
+from keras.models import Sequential, Model
+from keras import layers
+from keras import Input
 
 def numericalize(df, col, name, max_n_cat):
     """ Changes the column col from a categorical type to it's integer codes.
@@ -329,6 +332,7 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
         self.ts_scaler = StandardScaler(copy=True, with_mean=True, with_std=True)
         self.window_size = sequence_length
         self.l2_reg = l2_reg
+        self.pickle_file = os.path.join(self.output_directory, 'ts.pickle')
     
     def find_categorical(self, X):        
         # Get list of categorical column names
@@ -356,21 +360,31 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
         self.info(df.dtypes)
         self.df = df
         self.y = self.ts_scaler.fit_transform(y.reshape(-1,1))
-        self.ts = self.window_transform_series(self.window_size,df.index)
+        path = Path(self.pickle_file)
+        if path.exists():
+            self.ts = pickle.load( open( self.pickle_file, "rb" ) )
+        else:
+            self.ts = self.window_transform_series(self.window_size,df.index)
+            pickle.dump( X, open( self.pickle_file, "wb" ) )
         
-        return (df,y.astype('int') )
+        return (self.df, self.ts,self.y )
     def window_transform_series(self,window_size, index):
         
-        v = pd.DataFrame(self.y, index = index, columns=['Value'])
+        v = self.df[self.label_column]
         
         # x values ends 1 before the end
         X = []
         
         # Create window_size columns of shiffted x values
-        for id in index:
-           
-            r = v[:id].values[-window_size:]
-            X.append(r)
+        for lclid, new_df in v.groupby(level = 0):
+            d = np.asarray([x[1] for x in new_df.index])
+
+            for id in d:
+                r = new_df[lclid][:id].values[-window_size:]
+                if(len(r) < window_size):
+                    s = np.zeros(window_size - len(r))
+                    r = np.insert(r, 0, s, axis = 0)
+                X.append(r)
 
         # reshape each
         X =np.asarray(X)
@@ -540,7 +554,8 @@ if __name__ == "__main__":
     try:
         keras_multinput = KerasMultiInput(logger=logger)
         keras_multinput.find_categorical(df)
-        keras_multinput.create_dataset(df)
+        df, ts, y = keras_multinput.create_dataset(df)
+        keras_multinput.model_setup
     except Exception as ex:
         logger.exception(ex)
     finally:
