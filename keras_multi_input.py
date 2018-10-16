@@ -341,7 +341,7 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
     
     def find_categorical(self, X):        
         # Get list of categorical column names
-        self.categorical_columns = ['LCLid', "icon", "stdorToU", "Type", "day.of.week", 'precipType',  'summary', 'before_holiday', 'after_holiday', 'month', 'year']
+        self.categorical_columns = ['LCLid','Acorn', 'Acorn_grouped', "icon", "stdorToU", "Type", "day.of.week", 'precipType',  'summary', 'before_holiday', 'after_holiday', 'month', 'year']
         # Get list of non-categorical column names
         self.non_categorical_columns =list(filter(lambda x: x not in self.categorical_columns, X.columns))
         self.sequence_columns = ['energy_sum']
@@ -537,14 +537,14 @@ if __name__ == "__main__":
     # for date_field in date_fields:
     #     name = date_field.replace('Time', 'Hour')
     #     df[name] = df[date_field].apply(lambda x: x.hour)
-    df = df.drop(['Acorn', 'Acorn_grouped', 'energy_count', "temperatureMaxTime", "temperatureMinTime", "apparentTemperatureMinTime",
+    df = df.drop([ 'energy_count', "temperatureMaxTime", "temperatureMinTime", "apparentTemperatureMinTime",
                     "apparentTemperatureHighTime","sunsetTime", "uvIndexTime"  ,"sunriseTime","temperatureHighTime", "temperatureLowTime", 
                      "apparentTemperatureMaxTime",
                      "apparentTemperatureLowTime"], axis = 1)
     
     logger.info(df.head())
     try:
-        keras_multinput = KerasMultiInput(logger=logger, verbose=2, batch_size=2000, epochs=2, lr=0.01, l2_reg=0.02)
+        keras_multinput = KerasMultiInput(logger=logger, verbose=2, batch_size=2000, epochs=20, lr=0.01, l2_reg=0.02)
         keras_multinput.find_categorical(df)
         df, ts, y = keras_multinput.create_dataset(df)
         keras_multinput.model_setup(df, y)
