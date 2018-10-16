@@ -23,6 +23,7 @@ from pandas_ml import ConfusionMatrix
 from tpot.builtins import StackingEstimator
 from sklearn.model_selection import train_test_split
 import xgboost
+
 from sklearn_pandas import DataFrameMapper
 from sklearn.pipeline import make_pipeline, make_union
 from tpot.builtins import StackingEstimator
@@ -34,8 +35,13 @@ from sklearn.feature_selection import RFE
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import make_pipeline
 from keras.models import Sequential, Model
+from keras.layers.normalization import BatchNormalization
+from keras.optimizers import Adam, Adadelta, SGD
+from keras.callbacks import ModelCheckpoint
 from keras import layers
 from keras import Input
+from keras.layers.core import Dense, Activation, Dropout
+from keras import regularizers
 
 def numericalize(df, col, name, max_n_cat):
     """ Changes the column col from a categorical type to it's integer codes.
@@ -318,11 +324,11 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
             name = self.name
         return os.path.join(self.data_dir, name + '_weights.hdf5')
 
-    def __init__(self, verbose=1, batch_size=128, epochs=200,lr = 0.001, sequence_length= 20,l2_reg= 0.01, logger = None):
+    def __init__(self, verbose=1, batch_size=128, epochs=200,lr = 0.001, sequence_length= 20,l2_reg= 0.01, logger = None, ts_dim=1):
         self.log = logger
         self.current_directory = os.path.dirname(os.path.realpath(__file__))
         self.output_directory = os.path.join(self.current_directory,'data')
-
+        self.D = ts_dim
         self.lr = lr
         self.name = 'keras_multiInput'
         self.data_dir = os.path.join(self.current_directory, 'data')
@@ -365,7 +371,7 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
             self.ts = pickle.load( open( self.pickle_file, "rb" ) )
         else:
             self.ts = self.window_transform_series(self.window_size,df.index)
-            pickle.dump( X, open( self.pickle_file, "wb" ) )
+            pickle.dump( self.ts, open( self.pickle_file, "wb" ) )
         
         return (self.df, self.ts,self.y )
     def window_transform_series(self,window_size, index):
@@ -392,16 +398,18 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
         return X
     
     def model_setup(self, X,y):
-        valid_start_day = max(X.index) - timedelta(days=KerasMultiInput.VALID_DAYS)
-        self.val_idx = X.index[np.flatnonzero( (X.index <= max(y.index)) & (X.index >= valid_start_day))]
-        self.X_train = X[min(X.index):valid_start_day]
-        self.ts_train = self.ts[0:len(self.X_train), :]
-        self.y_train = y[self.X_train.index]
-        self.X_valid = X[min(self.val_idx):max(self.val_idx)]
-        self.ts_valid = self.ts[len(self.X_train):(len(self.X_train)+len(self.X_valid))]
-        self.y_valid = y[min(self.val_idx):max(self.val_idx)]
-        self.X_test = X[max(y.index):]
-        self.ts_test = self.ts[-len(self.X_test):]
+        max_date = max(X.index)[1]
+        valid_start_day = max_date - timedelta(days=KerasMultiInput.VALID_DAYS)       
+        train_idx = list(filter(lambda t: t[1] < valid_start_day, X.index))
+        valid_idx = list(filter(lambda t: t[1] >= valid_start_day, X.index))
+        ts = pd.DataFrame(self.ts, index = X.index)
+        y_pd = pd.DataFrame(y, index = X.index)
+        self.X_train = X.loc[train_idx]
+        self.ts_train = ts.loc[train_idx].values.reshape(-1, self.window_size, self.D)
+        self.y_train = y_pd.loc[train_idx].values.reshape(-1,1)
+        self.X_valid = X.loc[valid_idx]
+        self.ts_valid = ts.loc[valid_idx].values.reshape(-1, self.window_size, self.D)
+        self.y_valid = y_pd.loc[valid_idx].values.reshape(-1,1)
 
         cat_input = [Input(shape=(1,), dtype='int32', name=c) for c in self.categorical_columns]
         seq_input = Input(shape=( None, 1), dtype='float32', name='rnn_input')
@@ -416,30 +424,35 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
 
         #concatenated_embdding = layers.concatenate(cat_emb, axis=-1)
         #categDense = layers.Flatten()(concatenated_embdding)
-        seq_lay = layers.GRU(16,return_sequences=False, activation='tanh', 
+        seq_lay = layers.LSTM(16,return_sequences=True, activation='tanh', 
                 kernel_regularizer=regularizers.l2(self.l2_reg))(seq_input)
-        #seq_lay = layers.GRU(16,return_sequences=False, kernel_regularizer=regularizers.l2(self.l2_reg))(seq_lay)
+
+        seq_lay = layers.LSTM(64, return_sequences=True, activation='tanh', 
+                kernel_regularizer=regularizers.l2(self.l2_reg))(seq_lay)
+        seq_lay = layers.LSTM(16, return_sequences=False, activation='tanh', 
+                kernel_regularizer=regularizers.l2(self.l2_reg))(seq_lay)
 
         #concatenated = layers.concatenate([categDense, continuousDense, seq_lay1], axis =-1)
         all_layers.append(contInput)
         all_layers.append(seq_lay)
         lay = layers.concatenate(all_layers, axis =-1)
-        #lay = BatchNormalization()(lay)
+        lay = BatchNormalization()(lay)
         # lay = Dense(64, kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
         # lay = Dense(128, activation='tanh', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
 
-        # #lay = Dropout(0.8)(lay)
+        lay = Dropout(0.8)(lay)
         # lay = Dense(64, activation='relu', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
         lay = Dense(32, activation='tanh', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
-        #lay = BatchNormalization()(lay)
-        answer = layers.Dense(KerasMultiInput.N_CAT, activation='softmax')(lay)
+        lay = BatchNormalization()(lay)
+        answer = layers.Dense(1, activation='linear')(lay)
         inputs_all = cat_input
         inputs_all.append(contInput)
         inputs_all.append(seq_input)
         self.model = Model(inputs_all, answer)
         self.info(self.model.summary())
         adam = Adam(lr=self.lr)
-        self.model.compile(loss="sparse_categorical_crossentropy", optimizer=adam,metrics=['accuracy'])
+        self.model.compile(loss="mse", optimizer=adam,metrics=['mse', 'mae'])
+        
 
     def fit_data(self, show_figures = True):
         checkpointer = ModelCheckpoint(filepath=self.best_weights(self.name), verbose=self.verbose, save_best_only=True)
@@ -451,9 +464,9 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
         val_values['rnn_input'] = self.ts_valid
         
         history = self.model.fit(train_values, self.y_train, epochs=self.epochs, batch_size = self.batch_size,
-                                     #validation_data=(val_values, self.y_valid), 
+                                     validation_data=(val_values, self.y_valid), 
                                      verbose=self.verbose, shuffle=True,
-                                     validation_split=0.2,
+                                     #validation_split=0.2,
                                      callbacks=[checkpointer])
         if show_figures:
             fig, ax = plt.subplots(figsize=(10, 5))
@@ -466,55 +479,36 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
             plt.savefig(figure_name)
             plt.show()
         self.model.load_weights(self.best_weights(self.name))
-        test_values = {c:self.X_test[c] for c in self.categorical_columns}
-        test_values['continuouse'] = self.X_test[self.non_categorical_columns]
-        test_values['rnn_input'] = self.ts_test
-        test_predict = self.model.predict(test_values)
-        p  = self.model.predict(val_values)
-        t = np.sum(np.product(self.y_valid, np.log(p)))
-        self.info(f"Validation Score: {t}")
-        val_predict = np.argmax( p, axis=1)
+       
+        p  = self.model.evaluate(val_values, self.y_valid)
+        self.info(f"Validation Score: {p}")
         
-
-        confusion_matrix = ConfusionMatrix(self.y_valid.values[:], val_predict)
-        self.info (f'Confusion Marix: {confusion_matrix}')
-        self.plot_confusion_matrix(confusion_matrix, ['Bearish', 'Neutral', 'Bullish'])
-        self.info(f'Predicted Prop: {test_predict}')
-        self.info(f"Predicted values: {np.argmax(test_predict, axis=1)}")
-
-    @staticmethod
-    def plot_confusion_matrix(cm, target_names,  title='Confusion matrix', cmap=plt.cm.Blues):
-        cm.plot(cmap = cmap)
-        plt.ylabel('True label')
-        plt.xlabel('Predicted label')
-        plt.show()
-        #plt.savefig(file_name)
-
     def _meaning(self, x):
         # returns True/False according to fitted classifier
         # notice underscore on the beginning
         return( True )
 
-    def predict(self, X, y=None):
+    def predict(self, X,ts, y=None):
         try:
             test_values = {c:X[c] for c in self.categorical_columns}
             test_values['continuouse'] = X[self.non_categorical_columns]
+            test_values['rnn_input'] = ts
             test_predict = self.model.predict(test_values)
 
-            return np.argmax( test_predict, axis=1) 
+            return test_predict
         except AttributeError:
             raise RuntimeError("You must train classifer before predicting data!")
 
         return None
 
-    def score(self, X, y=None):
+    def score(self, X,ts, y=None):
         # counts number of values bigger than mean
         test_values = {c:X[c] for c in self.categorical_columns}
         test_values['continuouse'] = X[self.non_categorical_columns]
+        test_values['rnn_input'] = ts
         t = self.model.evaluate(x=test_values,y=y, batch_size=self.batch_size)
         self.log.info(t)
-        p = sum(np.equal(y.values[:].reshape(-1),  self.predict(X).reshape(-1)))/len(y)
-        return(p) 
+        return t
 
 if __name__ == "__main__":
     current_directory = os.path.dirname(os.path.realpath(__file__))
@@ -522,7 +516,6 @@ if __name__ == "__main__":
     feather_file = os.path.join(current_directory, 'data/total_data_filled.feather')
     df = pd.read_feather(feather_file)
     df = df.set_index([ 'index', 'day'])
-
     # read in the prepared data set
     logger = logging.getLogger('wp')
     logger.setLevel(logging.DEBUG)
@@ -555,7 +548,9 @@ if __name__ == "__main__":
         keras_multinput = KerasMultiInput(logger=logger)
         keras_multinput.find_categorical(df)
         df, ts, y = keras_multinput.create_dataset(df)
-        keras_multinput.model_setup
+        keras_multinput.model_setup(df, y)
+        keras_multinput.fit_data(show_figures=True)
+
     except Exception as ex:
         logger.exception(ex)
     finally:
