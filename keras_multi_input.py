@@ -9,7 +9,6 @@ import logging
 from datetime import timedelta
 import datetime
 import matplotlib.pyplot as plt
-plt.switch_backend('agg')
 import smtplib
 import talib
 import matplotlib as mpl
@@ -545,7 +544,7 @@ if __name__ == "__main__":
     
     logger.info(df.head())
     try:
-        keras_multinput = KerasMultiInput(logger=logger)
+        keras_multinput = KerasMultiInput(logger=logger, verbose=2, batch_size=2000, epochs=2, lr=0.01, l2_reg=0.02)
         keras_multinput.find_categorical(df)
         df, ts, y = keras_multinput.create_dataset(df)
         keras_multinput.model_setup(df, y)
