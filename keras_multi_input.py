@@ -346,6 +346,13 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
         self.non_categorical_columns =list(filter(lambda x: x not in self.categorical_columns, X.columns))
         self.sequence_columns = ['energy_sum']
         self.label_column = 'energy_sum'
+    def proces_categorical_columns(self, df):
+        for v in self.categorical_columns:
+            df[v] = df[v].astype('category').cat.as_ordered()
+        for v in self.non_categorical_columns:
+            df[v] = df[v].astype('float32')
+        self.cat_sz = [(c, len(df[c].cat.categories)+1) for c in self.categorical_columns]
+        self.emb_szs = [(c, min(50, (c+1)//2)) for _,c in self.cat_sz]
 
     def create_dataset(self, df):
         
@@ -353,13 +360,8 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
         ahead = y.groupby(level = 0).shift(-self.DAYS_AHEAD)
         df['Value'] = ahead.to_frame()
         df = df.dropna()
-        for v in self.categorical_columns:
-            df[v] = df[v].astype('category').cat.as_ordered()
-        for v in self.non_categorical_columns:
-            df[v] = df[v].astype('float32')
+        self.proces_categorical_columns(df)
 
-        self.cat_sz = [(c, len(df[c].cat.categories)+1) for c in self.categorical_columns]
-        self.emb_szs = [(c, min(50, (c+1)//2)) for _,c in self.cat_sz]
         df, y, self.nas, self.mapper = proc_df(df, y_fld='Value',  do_scale=True)
         df = df[self.categorical_columns + self.non_categorical_columns ]
         self.info(df.dtypes)
@@ -395,13 +397,21 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
         X =np.asarray(X)
        
         return X
-    
-    def model_setup(self, X,y):
+    def load_pickled_data(self):
+        self.X_train = pickle.load(open( os.path.join(self.output_directory, 'x_train_picle.pickle'), "rb" ) )
+        self.X_valid = pickle.load(open( os.path.join(self.output_directory, 'x_valid_picle.pickle'), "rb" ) )
+        self.ts_train = pickle.load( open( os.path.join(self.output_directory, 'ts_train_picle.pickle'), "rb" ) )
+        self.ts_valid = pickle.load( open( os.path.join(self.output_directory, 'ts_valid_picle.pickle'), "rb" ) )
+        self.y_train = pickle.load( open( os.path.join(self.output_directory, 'y_train_picle'), "rb" ) )
+        self.y_valid = pickle.load( open( os.path.join(self.output_directory, 'y_valid_picle'), "rb" ) )
+        return self.X_train, self.ts_train, self.y_train, self.X_valid, self.ts_valid, self.y_valid  
+
+    def separate_train_valid(self, X, ts,y):
         max_date = max(X.index)[1]
         valid_start_day = max_date - timedelta(days=KerasMultiInput.VALID_DAYS)       
         train_idx = list(filter(lambda t: t[1] < valid_start_day, X.index))
         valid_idx = list(filter(lambda t: t[1] >= valid_start_day, X.index))
-        ts = pd.DataFrame(self.ts, index = X.index)
+        ts = pd.DataFrame(ts, index = X.index)
         y_pd = pd.DataFrame(y, index = X.index)
         self.X_train = X.loc[train_idx]
         self.ts_train = ts.loc[train_idx].values.reshape(-1, self.window_size, self.D)
@@ -409,7 +419,18 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
         self.X_valid = X.loc[valid_idx]
         self.ts_valid = ts.loc[valid_idx].values.reshape(-1, self.window_size, self.D)
         self.y_valid = y_pd.loc[valid_idx].values.reshape(-1,1)
+        pickle.dump( self.X_train, open( os.path.join(self.output_directory, 'x_train_picle.pickle'), "wb" ) )
+        pickle.dump( self.X_valid, open( os.path.join(self.output_directory, 'x_valid_picle.pickle'), "wb" ) )
+        pickle.dump( self.ts_train, open( os.path.join(self.output_directory, 'ts_train_picle.pickle'), "wb" ) )
+        pickle.dump( self.ts_valid, open( os.path.join(self.output_directory, 'ts_valid_picle.pickle'), "wb" ) )
+        pickle.dump( self.y_train, open( os.path.join(self.output_directory, 'y_train_picle'), "wb" ) )
+        pickle.dump( self.y_valid, open( os.path.join(self.output_directory, 'y_valid_picle'), "wb" ) )
 
+
+        return self.X_train, self.ts_train, self.y_train, self.X_valid, self.ts_valid, self.y_valid  
+    
+    def model_setup(self):
+        
         cat_input = [Input(shape=(1,), dtype='int32', name=c) for c in self.categorical_columns]
         seq_input = Input(shape=( None, 1), dtype='float32', name='rnn_input')
         all_layers = []
@@ -419,17 +440,14 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
             all_layers.append(flat)
 
         contInput = Input(shape=(len(self.non_categorical_columns),), dtype='float32', name='continuouse')
-        #continuousDense = layers.Dense(32)(contInput)
-
-        #concatenated_embdding = layers.concatenate(cat_emb, axis=-1)
-        #categDense = layers.Flatten()(concatenated_embdding)
-        seq_lay = layers.LSTM(16,return_sequences=True, activation='tanh', 
+       
+        seq_lay = layers.LSTM(32,return_sequences=False, activation='tanh', 
                 kernel_regularizer=regularizers.l2(self.l2_reg))(seq_input)
 
-        seq_lay = layers.LSTM(64, return_sequences=True, activation='tanh', 
-                kernel_regularizer=regularizers.l2(self.l2_reg))(seq_lay)
-        seq_lay = layers.LSTM(16, return_sequences=False, activation='tanh', 
-                kernel_regularizer=regularizers.l2(self.l2_reg))(seq_lay)
+        # seq_lay = layers.LSTM(64, return_sequences=True, activation='tanh', 
+        #         kernel_regularizer=regularizers.l2(self.l2_reg))(seq_lay)
+        # seq_lay = layers.LSTM(16, return_sequences=False, activation='tanh', 
+        #         kernel_regularizer=regularizers.l2(self.l2_reg))(seq_lay)
 
         #concatenated = layers.concatenate([categDense, continuousDense, seq_lay1], axis =-1)
         all_layers.append(contInput)
@@ -439,9 +457,10 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
         # lay = Dense(64, kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
         # lay = Dense(128, activation='tanh', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
 
-        lay = Dropout(0.8)(lay)
+        #lay = Dropout(0.5)(lay)
         # lay = Dense(64, activation='relu', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
-        lay = Dense(32, activation='tanh', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
+        lay = Dense(128, activation='relu', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
+        lay = Dense(32, activation='relu', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
         lay = BatchNormalization()(lay)
         answer = layers.Dense(1, activation='linear')(lay)
         inputs_all = cat_input
@@ -544,10 +563,15 @@ if __name__ == "__main__":
     
     logger.info(df.head())
     try:
-        keras_multinput = KerasMultiInput(logger=logger, verbose=2, batch_size=2000, epochs=20, lr=0.01, l2_reg=0.02)
+        keras_multinput = KerasMultiInput(logger=logger, verbose=2, batch_size=2000, epochs=20, lr=0.001, l2_reg=0.2)
         keras_multinput.find_categorical(df)
-        df, ts, y = keras_multinput.create_dataset(df)
-        keras_multinput.model_setup(df, y)
+        logger.info(df.head())
+        #df, ts, y = keras_multinput.create_dataset(df)
+        #X_train, ts_train, y_train, X_valid, ts_valid, y_valid = keras_multinput.separate_train_valid(df, ts, y)
+        keras_multinput.proces_categorical_columns(df)
+        X_train, ts_train, y_train, X_valid, ts_valid, y_valid = keras_multinput.load_pickled_data()
+        logger.info(X_train.head())
+        keras_multinput.model_setup()
         keras_multinput.fit_data(show_figures=True)
 
     except Exception as ex:
