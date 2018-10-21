@@ -4,7 +4,7 @@ from random import sample, randint
 import os, datetime
 from pathlib import Path
 import itertools
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler,MinMaxScaler
 import logging
 from datetime import timedelta
 import datetime
@@ -17,10 +17,10 @@ from sklearn.base import BaseEstimator, ClassifierMixin
 from email.message import EmailMessage
 from pandas_ml import ConfusionMatrix
 from sklearn.model_selection import train_test_split
+from sklearn_pandas import DataFrameMapper
+from sklearn.pipeline import make_pipeline, make_union
+from tpot.builtins import StackingEstimator
 from pandas.api.types import is_string_dtype, is_numeric_dtype
-from sklearn_pandas import *
-from sklearn.ensemble import ExtraTreesClassifier
-from sklearn.feature_selection import RFE
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import make_pipeline
 from keras.models import Sequential, Model
@@ -31,6 +31,7 @@ from keras import layers
 from keras import Input
 from keras.layers.core import Dense, Activation, Dropout
 from keras import regularizers
+import random
 
 def numericalize(df, col, name, max_n_cat):
     """ Changes the column col from a categorical type to it's integer codes.
@@ -280,9 +281,9 @@ def proc_df(df, y_fld=None, skip_flds=None, ignore_flds=None, do_scale=False, na
     
 class KerasMultiInput(BaseEstimator, ClassifierMixin):
 
-    DAYS_AHEAD = 5
+    DAYS_AHEAD = 1
     LAGGED_DAYS = 0
-    VALID_DAYS = 20
+    VALID_DAYS = 15
     def __enter__(self):
         return (self)
     def info(self, txt):
@@ -323,7 +324,7 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
         self.batch_size = batch_size
         self.epochs = epochs
         self.verbose = verbose
-        self.ts_scaler = StandardScaler(copy=True, with_mean=True, with_std=True)
+        self.ts_scaler = MinMaxScaler(feature_range=(0,.9), copy=True)
         self.window_size = sequence_length
         self.l2_reg = l2_reg
         self.pickle_file = os.path.join(self.output_directory, 'ts.pickle')
@@ -342,6 +343,7 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
             df[v] = df[v].astype('float32')
         self.cat_sz = [(c, len(df[c].cat.categories)+1) for c in self.categorical_columns]
         self.emb_szs = [(c, min(50, (c+1)//2)) for _,c in self.cat_sz]
+        self.ts_scaler.fit(df[self.label_column].fillna(method = 'ffill').reshape(-1,1))
 
     def create_dataset(self, df):
         
@@ -356,12 +358,7 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
         self.info(df.dtypes)
         self.df = df
         self.y = self.ts_scaler.fit_transform(y.reshape(-1,1))
-        path = Path(self.pickle_file)
-        if path.exists():
-            self.ts = pickle.load( open( self.pickle_file, "rb" ) )
-        else:
-            self.ts = self.window_transform_series(self.window_size,df.index)
-            pickle.dump( self.ts, open( self.pickle_file, "wb" ) )
+        self.ts = self.window_transform_series(self.window_size,df.index)
         
         return (self.df, self.ts,self.y )
     def window_transform_series(self,window_size, index):
@@ -430,13 +427,13 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
 
         contInput = Input(shape=(len(self.non_categorical_columns),), dtype='float32', name='continuouse')
        
-        seq_lay = layers.LSTM(32,return_sequences=False, activation='tanh', 
-                kernel_regularizer=regularizers.l2(self.l2_reg))(seq_input)
+        # seq_lay = layers.LSTM(32,return_sequences=True, activation='tanh', 
+        #         kernel_regularizer=regularizers.l2(self.l2_reg))(seq_input)
 
         # seq_lay = layers.LSTM(64, return_sequences=True, activation='tanh', 
-        #         kernel_regularizer=regularizers.l2(self.l2_reg))(seq_lay)
-        # seq_lay = layers.LSTM(16, return_sequences=False, activation='tanh', 
-        #         kernel_regularizer=regularizers.l2(self.l2_reg))(seq_lay)
+        #          kernel_regularizer=regularizers.l2(self.l2_reg))(seq_lay)
+        seq_lay = layers.LSTM(16, return_sequences=False, activation='tanh', 
+                 kernel_regularizer=regularizers.l2(self.l2_reg))(seq_input)
 
         #concatenated = layers.concatenate([categDense, continuousDense, seq_lay1], axis =-1)
         all_layers.append(contInput)
@@ -447,18 +444,23 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
         # lay = Dense(128, activation='tanh', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
 
         #lay = Dropout(0.5)(lay)
-        # lay = Dense(64, activation='relu', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
-        lay = Dense(128, activation='relu', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
-        lay = Dense(32, activation='relu', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
+        #lay = Dense(128, activation='relu', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
+        #lay = BatchNormalization()(lay)
+        lay = Dense(64, activation='relu', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
         lay = BatchNormalization()(lay)
-        answer = layers.Dense(1, activation='linear')(lay)
+        #lay = Dense(64, activation='relu', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
+        lay = Dense(4, activation='relu', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
+        #lay = BatchNormalization()(lay)
+        answer = layers.Dense(1, activation='sigmoid')(lay)
         inputs_all = cat_input
         inputs_all.append(contInput)
         inputs_all.append(seq_input)
         self.model = Model(inputs_all, answer)
         self.info(self.model.summary())
         adam = Adam(lr=self.lr)
-        self.model.compile(loss="mse", optimizer=adam,metrics=['mse', 'mae'])
+        self.model.compile(loss='binary_crossentropy', optimizer=adam,metrics=['mse', 'mae'])
+    def load_model(self):
+        self.model.load_weights(self.best_weights(self.name))
         
 
     def fit_data(self, show_figures = True):
@@ -494,6 +496,9 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
         # returns True/False according to fitted classifier
         # notice underscore on the beginning
         return( True )
+
+    def unscale_y_value(self, y):
+        return self.ts_scaler.inverse_transform(y)
 
     def predict(self, X,ts, y=None):
         try:
@@ -552,7 +557,7 @@ if __name__ == "__main__":
     
     logger.info(df.head())
     try:
-        keras_multinput = KerasMultiInput(logger=logger, verbose=2, batch_size=2000, epochs=20, lr=0.001, l2_reg=0.2)
+        keras_multinput = KerasMultiInput(logger=logger, verbose=2, batch_size=2000, epochs=20, lr=0.0001, l2_reg=0.05, sequence_length =5)
         keras_multinput.find_categorical(df)
         logger.info(df.head())
         #df, ts, y = keras_multinput.create_dataset(df)
@@ -562,6 +567,45 @@ if __name__ == "__main__":
         logger.info(X_train.head())
         keras_multinput.model_setup()
         keras_multinput.fit_data(show_figures=True)
+        keras_multinput.load_model()
+        ts_valid = pd.DataFrame(ts_valid.reshape(-1, keras_multinput.window_size), index=X_valid.index)
+        ts_train = pd.DataFrame(ts_train.reshape(-1, keras_multinput.window_size), index=X_train.index)
+        y_train = pd.DataFrame(y_train, index = X_train.index, columns = ['Real Value'])
+        y_valid = pd.DataFrame(y_valid, index = X_valid.index, columns = ['Real Value'])
+        lclids = df.LCLid.unique()
+        lclid_test = list( [ lclids[i] for i in sorted(random.sample(range(len(lclids)), 4)) ])
+        colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
+        for lclid, clr in zip(lclid_test, colors[:len(lclid_test)]):
+            logger.info(f'Predicting values for LCLID: {lclid}')
+            X = X_train.loc[lclid,:]
+            if(len(X) > 0):
+                ts = ts_train.loc[lclid, :].values.reshape(-1, keras_multinput.window_size,keras_multinput.D)
+                y = keras_multinput.unscale_y_value(keras_multinput.predict(X,ts).reshape(-1,1))
+                y_pred = pd.DataFrame(y, index = y_train.loc[lclid,:].index, columns = ['Predicted Value'] )
+                idx = list([t + datetime.timedelta(days=KerasMultiInput.DAYS_AHEAD) for t in y_train.loc[lclid,:].index])
+                y_real = pd.DataFrame(keras_multinput.unscale_y_value(y_train.loc[lclid,:]), index = idx, columns= ['Real Values'])
+
+                plt.plot(y_pred, label=f'Predicted value (kw) for LCLid: {lclid}', linestyle = '--', color=clr )
+                plt.plot(y_real,label=f'Real value (kw) for LCLid: {lclid}', linestyle = '-', color = clr)
+
+            X = X_valid.loc[lclid,:]
+            if(len(X) > 0):
+                ts = ts_valid.loc[lclid, :].values.reshape(-1, keras_multinput.window_size,keras_multinput.D)
+                y = keras_multinput.unscale_y_value(keras_multinput.predict(X,ts).reshape(-1,1))
+                y_pred = pd.DataFrame(y, index = y_valid.loc[lclid,:].index, columns = ['Predicted Value'] )
+                idx = list([t + datetime.timedelta(days=KerasMultiInput.DAYS_AHEAD) for t in  y_valid.loc[lclid,:].index])
+                y_real = pd.DataFrame(keras_multinput.unscale_y_value(y_valid.loc[lclid,:]), index =idx, columns= ['Real Values'])
+
+                plt.plot(y_pred, linestyle = '--', color=clr , linewidth=2)
+                plt.plot(y_valid.loc[lclid,:], linestyle = '-', color = clr, linewidth=2)
+        
+        plt.legend(loc='best')
+        plt.xlabel('Date')
+        plt.ylabel('Energy daily sum (kw.h)')
+        plt.show()
+            
+    
+
 
     except Exception as ex:
         logger.exception(ex)
