@@ -177,19 +177,14 @@ glimpse(weather_daily)
 glimpse(house_hold_information)
 
 
-total_data = ss %>% inner_join(weather_daily, by = c('day' = 'time' )) %>% inner_join(house_hold_information, by = 'LCLid') %>% select(-file) %>%
+total_data = ss  %>% inner_join(house_hold_information, by = 'LCLid')  %>% left_join(weather_daily, by = c('day' = 'time' ))%>% select(-file) %>%
   mutate(day.of.week = weekdays(day))
 
 
 glimpse(total_data)
 
-factor_fields = c( "icon", "stdorToU", "Acorn", "Acorn_grouped", "Type", "day.of.week", 'precipType',  'summary', 'before_holiday', 'after_holiday', 'month', 'year')
+factor_fields = c( "icon", "stdorToU", "Acorn", "Acorn_grouped", "Type", "day.of.week", 'precipType',  'summary', 'before_holiday', 'after_holiday', 'month', 'year', 'LCLid')
 
-
-
-
-
-total_data = read_feather('data/total_data.feather')
 
 time.periods = unique(total_data$day)
 
@@ -221,10 +216,11 @@ total_data <- total_data %>% left_join(uk.holidays, by = c('day' = 'Date'))
 total_data$Type[is.na(total_data$Type) ] = 'Normal'
 for(i in 1:NROW(factor_fields))
 {
-  d = factor_fields[i]
-  total_data[,d] = as.factor(data[,d])
+  d = factor_fields[[i]]
+  total_data[,d] = as.factor(total_data[,d])
 }
- total_data = total_data %>% mutate(month = month(day), year = year(day))
+
+total_data = total_data %>% mutate(month = month(day), year = year(day))
 
 glimpse(total_data)
 

@@ -9,26 +9,16 @@ import logging
 from datetime import timedelta
 import datetime
 import matplotlib.pyplot as plt
-import smtplib
-import talib
 import matplotlib as mpl
-from joblib import Parallel, delayed
 import  warnings,sklearn
 import pickle
 # Import the email modules we'll need
 from sklearn.base import BaseEstimator, ClassifierMixin
 from email.message import EmailMessage
 from pandas_ml import ConfusionMatrix
-from tpot.builtins import StackingEstimator
 from sklearn.model_selection import train_test_split
-import xgboost
-
-from sklearn_pandas import DataFrameMapper
-from sklearn.pipeline import make_pipeline, make_union
-from tpot.builtins import StackingEstimator
-from xgboost import XGBClassifier
 from pandas.api.types import is_string_dtype, is_numeric_dtype
-from tpot import TPOTClassifier
+from sklearn_pandas import *
 from sklearn.ensemble import ExtraTreesClassifier
 from sklearn.feature_selection import RFE
 from sklearn.model_selection import train_test_split
