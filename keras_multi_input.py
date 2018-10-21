@@ -282,8 +282,7 @@ def proc_df(df, y_fld=None, skip_flds=None, ignore_flds=None, do_scale=False, na
     res = [df, y, na_dict]
     if do_scale: res = res + [mapper]
     return res
-
-
+    
 class KerasMultiInput(BaseEstimator, ClassifierMixin):
 
     DAYS_AHEAD = 1
