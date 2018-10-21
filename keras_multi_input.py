@@ -286,7 +286,7 @@ def proc_df(df, y_fld=None, skip_flds=None, ignore_flds=None, do_scale=False, na
 
 class KerasMultiInput(BaseEstimator, ClassifierMixin):
 
-    DAYS_AHEAD = 5
+    DAYS_AHEAD = 1
     LAGGED_DAYS = 0
     VALID_DAYS = 15
     def __enter__(self):
@@ -450,11 +450,12 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
 
         #lay = Dropout(0.5)(lay)
         #lay = Dense(128, activation='relu', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
+        #lay = BatchNormalization()(lay)
         lay = Dense(64, activation='relu', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
-        # 
-        # lay = Dense(64, activation='relu', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
-        lay = Dense(4, activation='relu', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
         lay = BatchNormalization()(lay)
+        #lay = Dense(64, activation='relu', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
+        lay = Dense(4, activation='relu', kernel_regularizer=regularizers.l2(self.l2_reg))(lay)
+        #lay = BatchNormalization()(lay)
         answer = layers.Dense(1, activation='sigmoid')(lay)
         inputs_all = cat_input
         inputs_all.append(contInput)
@@ -570,30 +571,38 @@ if __name__ == "__main__":
         X_train, ts_train, y_train, X_valid, ts_valid, y_valid = keras_multinput.load_pickled_data()
         logger.info(X_train.head())
         keras_multinput.model_setup()
-        #keras_multinput.fit_data(show_figures=True)
+        keras_multinput.fit_data(show_figures=True)
         keras_multinput.load_model()
+        ts_valid = pd.DataFrame(ts_valid.reshape(-1, keras_multinput.window_size), index=X_valid.index)
+        ts_train = pd.DataFrame(ts_train.reshape(-1, keras_multinput.window_size), index=X_train.index)
+        y_train = pd.DataFrame(y_train, index = X_train.index, columns = ['Real Value'])
+        y_valid = pd.DataFrame(y_valid, index = X_valid.index, columns = ['Real Value'])
         lclids = df.LCLid.unique()
-        lclid_test = [ lclids[i] for i in sorted(random.sample(range(len(lclids)), 4)) ]
-
-        train_idx = list([(t[0], t[1] + datetime.timedelta(days=KerasMultiInput.DAYS_AHEAD)) for t in X_train.index])
-        valid_idx = list([(t[0], t[1] + datetime.timedelta(days=KerasMultiInput.DAYS_AHEAD)) for t in X_valid.index])
-        y_predicted = pd.DataFrame(keras_multinput.unscale_y_value(keras_multinput.predict(X_valid, ts_valid)), index = valid_idx, columns = ['Predicted Value'])
-        y_valid_value = pd.DataFrame(keras_multinput.unscale_y_value(y_valid), index= X_valid.index, columns = ['Real Value'])
-
-        y_train_pred = pd.DataFrame(keras_multinput.unscale_y_value(keras_multinput.predict(X_train, ts_train)), index =train_idx, columns = ['Predicted Value'])
-        y_train_value = pd.DataFrame(keras_multinput.unscale_y_value(y_train), index= X_train.index, columns = ['Real Value'])
-        
+        lclid_test = list( [ lclids[i] for i in sorted(random.sample(range(len(lclids)), 4)) ])
         colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
         for lclid, clr in zip(lclid_test, colors[:len(lclid_test)]):
             logger.info(f'Predicting values for LCLID: {lclid}')
-            y_pred = y_predicted.loc[lclid,:]
-            y_real = y_valid_value.loc[lclid,:]
+            X = X_train.loc[lclid,:]
+            if(len(X) > 0):
+                ts = ts_train.loc[lclid, :].values.reshape(-1, keras_multinput.window_size,keras_multinput.D)
+                y = keras_multinput.unscale_y_value(keras_multinput.predict(X,ts).reshape(-1,1))
+                y_pred = pd.DataFrame(y, index = y_train.loc[lclid,:].index, columns = ['Predicted Value'] )
+                idx = list([t + datetime.timedelta(days=KerasMultiInput.DAYS_AHEAD) for t in y_train.loc[lclid,:].index])
+                y_real = pd.DataFrame(keras_multinput.unscale_y_value(y_train.loc[lclid,:]), index = idx, columns= ['Real Values'])
 
-            plt.plot(y_pred, label=f'Predicted value (kw) for LCLid: {lclid}', linestyle = '--', color=clr )
-            plt.plot(y_real,label=f'Real value (kw) for LCLid: {lclid}', linestyle = '-', color = clr)
+                plt.plot(y_pred, label=f'Predicted value (kw) for LCLid: {lclid}', linestyle = '--', color=clr )
+                plt.plot(y_real,label=f'Real value (kw) for LCLid: {lclid}', linestyle = '-', color = clr)
 
-            plt.plot(y_train_pred.loc[lclid,:], linestyle = '--', color=clr , linewidth=2)
-            plt.plot(y_train_value.loc[lclid,:], linestyle = '-', color = clr, linewidth=2)
+            X = X_valid.loc[lclid,:]
+            if(len(X) > 0):
+                ts = ts_valid.loc[lclid, :].values.reshape(-1, keras_multinput.window_size,keras_multinput.D)
+                y = keras_multinput.unscale_y_value(keras_multinput.predict(X,ts).reshape(-1,1))
+                y_pred = pd.DataFrame(y, index = y_valid.loc[lclid,:].index, columns = ['Predicted Value'] )
+                idx = list([t + datetime.timedelta(days=KerasMultiInput.DAYS_AHEAD) for t in  y_valid.loc[lclid,:].index])
+                y_real = pd.DataFrame(keras_multinput.unscale_y_value(y_valid.loc[lclid,:]), index =idx, columns= ['Real Values'])
+
+                plt.plot(y_pred, linestyle = '--', color=clr , linewidth=2)
+                plt.plot(y_valid.loc[lclid,:], linestyle = '-', color = clr, linewidth=2)
         
         plt.legend(loc='best')
         plt.xlabel('Date')
