@@ -527,6 +527,7 @@ if __name__ == "__main__":
     log_file = os.path.join(current_directory, 'data/wp.log')
     feather_file = os.path.join(current_directory, 'data/total_data_filled.feather')
     df = pd.read_feather(feather_file)
+    acorn_Lclid = df[['Acorn', 'LCLid']].drop_duplicates()
     df = df.set_index([ 'index', 'day'])
     # read in the prepared data set
     logger = logging.getLogger('wp')
@@ -566,7 +567,7 @@ if __name__ == "__main__":
         X_train, ts_train, y_train, X_valid, ts_valid, y_valid = keras_multinput.load_pickled_data()
         logger.info(X_train.head())
         keras_multinput.model_setup()
-        keras_multinput.fit_data(show_figures=True)
+        #keras_multinput.fit_data(show_figures=True)
         keras_multinput.load_model()
         ts_valid = pd.DataFrame(ts_valid.reshape(-1, keras_multinput.window_size), index=X_valid.index)
         ts_train = pd.DataFrame(ts_train.reshape(-1, keras_multinput.window_size), index=X_train.index)
@@ -603,7 +604,46 @@ if __name__ == "__main__":
         plt.xlabel('Date')
         plt.ylabel('Energy daily sum (kw.h)')
         plt.show()
-            
+
+
+        # predict_y_train =  keras_multinput.unscale_y_value(keras_multinput.predict(X_train,ts_train.values.reshape(-1, keras_multinput.window_size,keras_multinput.D)).reshape(-1,1))
+        # predict_y_valid =  keras_multinput.unscale_y_value(keras_multinput.predict(X_valid,ts_valid.values.reshape(-1, keras_multinput.window_size,keras_multinput.D)).reshape(-1,1))
+
+        # pickle.dump( predict_y_train, open( os.path.join('./data', 'predict_y_train.pickle'), "wb" ) )
+        # pickle.dump( predict_y_valid, open( os.path.join('./data', 'predict_y_valid.pickle'), "wb" ) )
+        yy =pickle.load(open( os.path.join('./data', 'predict_y_train.pickle'), "rb" ) )
+        predict_y_train = pd.DataFrame(yy, columns = ['Predicted'], index = X_train.index)
+        predict_y_train['Real'] = keras_multinput.unscale_y_value(y_train)
+        yy = pickle.load(open( os.path.join('./data', 'predict_y_valid.pickle'), "rb" ) )
+        predict_y_valid = pd.DataFrame(yy, columns = ['Predicted'], index = X_valid.index)
+        predict_y_valid['Real'] = keras_multinput.unscale_y_value(y_valid)
+        logger.info(predict_y_train.head())
+        predict_y_train = predict_y_train.reset_index().merge(acorn_Lclid,how='inner', left_on=['index'], right_on=['LCLid'])
+        predict_y_valid = predict_y_valid.reset_index().merge(acorn_Lclid,how='inner', left_on=['index'], right_on=['LCLid'])
+        logger.info(predict_y_train.head())
+        predict_y_train = predict_y_train.drop(['LCLid', 'index'],axis=1).groupby(['Acorn','day']).sum().dropna()
+        predict_y_valid = predict_y_valid.drop(['LCLid', 'index'],axis=1).groupby(['Acorn','day']).sum().dropna()
+        logger.info(predict_y_train.head())
+        acrons = acorn_Lclid.Acorn.unique()
+        acorn_tests = list( [ acrons[i] for i in sorted(random.sample(range(len(acrons)), 4)) ])
+        acorn_tests.append('ACORN-A')
+        for acorn, clr in zip(acorn_tests, colors[:len(lclid_test)]):
+            logger.info(f'Predicting values for Acorn: {acorn}')
+
+            y_pred = predict_y_train.loc[acorn,:]
+            plt.plot(y_pred.Predicted, label=f'Predicted value (kw) for Acorn: {acorn}', linestyle = '--', color=clr )
+            plt.plot(y_pred.Real,label=f'Real value (kw) for Acorn: {acorn}', linestyle = '-', color = clr)
+            y_pred = predict_y_valid.loc[acorn,:]
+            plt.plot(y_pred['Predicted'], linestyle = '--', color=clr , linewidth=2, label='Validation Predicted')
+            plt.plot(y_pred['Real'], linestyle = '-', color = clr, linewidth=2, label = 'Validation Real')
+    
+        plt.legend(loc='best')
+        plt.xlabel('Date')
+        plt.ylabel('Energy daily sum (kw.h)')
+        plt.show()
+
+
+
     
 
 
