@@ -15,7 +15,6 @@ import pickle
 # Import the email modules we'll need
 from sklearn.base import BaseEstimator, ClassifierMixin
 from email.message import EmailMessage
-from pandas_ml import ConfusionMatrix
 from sklearn.model_selection import train_test_split
 from sklearn_pandas import DataFrameMapper
 from sklearn.pipeline import make_pipeline, make_union
@@ -23,14 +22,14 @@ from tpot.builtins import StackingEstimator
 from pandas.api.types import is_string_dtype, is_numeric_dtype
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import make_pipeline
-from keras.models import Sequential, Model
-from keras.layers.normalization import BatchNormalization
-from keras.optimizers import Adam, Adadelta, SGD
-from keras.callbacks import ModelCheckpoint
-from keras import layers
-from keras import Input
-from keras.layers.core import Dense, Activation, Dropout
-from keras import regularizers
+from tensorflow.keras.models import Sequential, Model
+from tensorflow.keras.layers import BatchNormalization
+from tensorflow.keras.optimizers import Adam, Adadelta, SGD
+from tensorflow.keras.callbacks import ModelCheckpoint
+from tensorflow.keras import layers
+from tensorflow.keras import Input
+from tensorflow.keras.layers import Dense, Activation, Dropout
+from tensorflow.keras import regularizers
 import random
 
 def numericalize(df, col, name, max_n_cat):
