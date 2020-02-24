@@ -342,7 +342,7 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
             df[v] = df[v].astype('float32')
         self.cat_sz = [(c, len(df[c].cat.categories)+1) for c in self.categorical_columns]
         self.emb_szs = [(c, min(50, (c+1)//2)) for _,c in self.cat_sz]
-        self.ts_scaler.fit(df[self.label_column].fillna(method = 'ffill').reshape(-1,1))
+        self.ts_scaler.fit(df[self.label_column].fillna(method = 'ffill').values.reshape(-1, 1))
 
     def create_dataset(self, df):
         
