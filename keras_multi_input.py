@@ -342,7 +342,7 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
             df[v] = df[v].astype('float32')
         self.cat_sz = [(c, len(df[c].cat.categories)+1) for c in self.categorical_columns]
         self.emb_szs = [(c, min(50, (c+1)//2)) for _,c in self.cat_sz]
-        self.ts_scaler.fit(df[self.label_column].fillna(method = 'ffill').values.reshape(-1, 1))
+        self.ts_scaler.fit(df[self.label_column].fillna(method = 'ffill').values.reshape(-1,1))
 
     def create_dataset(self, df):
         
@@ -460,7 +460,44 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
         self.model.compile(loss='binary_crossentropy', optimizer=adam,metrics=['mse', 'mae'])
     def load_model(self):
         self.model.load_weights(self.best_weights(self.name))
-        
+    
+    # learning rate schedul
+    @staticmethod
+    def step_decay( epoch):
+        initial_lrate = 0.003
+        final_lrate = 1e-6
+        if epoch < 20:
+            e = epoch
+            if e < 10:
+                lrate = final_lrate*np.exp(-e*(np.log(final_lrate) - np.log(initial_lrate))/10)
+            else:
+                e = e - 10
+                lrate = initial_lrate*np.exp(e*(np.log(final_lrate) - np.log(initial_lrate))/10)
+           
+        elif epoch < 40:
+            e = epoch-20
+            if e < 10:
+                lrate = final_lrate*np.exp(-e*(np.log(final_lrate) - np.log(initial_lrate))/10)
+            else:
+                e = e - 10
+                lrate = initial_lrate*np.exp(e*(np.log(final_lrate) - np.log(initial_lrate))/10)
+        elif epoch < 60:
+            e = epoch-40
+            if e < 10:
+                lrate = final_lrate*np.exp(-e*(np.log(final_lrate) - np.log(initial_lrate))/10)
+            else:
+                e = e - 10
+                lrate = initial_lrate*np.exp(e*(np.log(final_lrate) - np.log(initial_lrate))/10)
+        else:
+            e = epoch-60
+            if e < 15:
+               lrate = final_lrate*np.exp(-e*(np.log(final_lrate) - np.log(initial_lrate))/15)
+            else:
+                e = e - 15
+                lrate = initial_lrate*np.exp(e*(np.log(final_lrate) - np.log(initial_lrate))/15)
+
+        return lrate
+
 
     def fit_data(self, show_figures = True):
         checkpointer = ModelCheckpoint(filepath=self.best_weights(self.name), verbose=self.verbose, save_best_only=True)
@@ -470,12 +507,13 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
         val_values = {c:self.X_valid[c] for c in self.categorical_columns}
         val_values['continuouse'] = self.X_valid[self.non_categorical_columns]
         val_values['rnn_input'] = self.ts_valid
+        lrate = K.callbacks.LearningRateScheduler(self.step_decay, verbose=2)
         
         history = self.model.fit(train_values, self.y_train, epochs=self.epochs, batch_size = self.batch_size,
                                      validation_data=(val_values, self.y_valid), 
                                      verbose=self.verbose, shuffle=True,
                                      #validation_split=0.2,
-                                     callbacks=[checkpointer])
+                                     callbacks=[checkpointer, lrate])
         if show_figures:
             fig, ax = plt.subplots(figsize=(10, 5))
             # plot history
@@ -557,7 +595,7 @@ if __name__ == "__main__":
     
     logger.info(df.head())
     try:
-        keras_multinput = KerasMultiInput(logger=logger, verbose=2, batch_size=2000, epochs=20, lr=0.0001, l2_reg=0.05, sequence_length =5)
+        keras_multinput = KerasMultiInput(logger=logger, verbose=2, batch_size=2000, epochs=90, lr=0.0001, l2_reg=0.05, sequence_length =5)
         keras_multinput.find_categorical(df)
         logger.info(df.head())
         #df, ts, y = keras_multinput.create_dataset(df)

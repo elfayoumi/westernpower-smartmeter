@@ -68,7 +68,7 @@ hhblock.data <- foreach(i = hhblock.files, .combine = rbind) %dopar%
 hhblock.data <- setDT(hhblock.data)
 glimpse(hhblock.data)
 uk_bank_holidays = read.csv('data/uk_bank_holidays.csv', sep=',', stringsAsFactors = F)
-uk_bank_holidays$Bank.holidays = as.Date(uk_bank_holidays$Bank.holidays, formate='%Y-%m-%d')
+uk_bank_holidays$Bank.holidays = anytime::anydate(uk_bank_holidays$Bank.holidays)
 glimpse(uk_bank_holidays)
 
 weather_daily_darksky = read.csv('data/weather_daily_darksky.csv', sep=',', stringsAsFactors = F)
