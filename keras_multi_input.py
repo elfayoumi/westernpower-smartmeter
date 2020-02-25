@@ -25,7 +25,7 @@ from sklearn.pipeline import make_pipeline
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import BatchNormalization
 from tensorflow.keras.optimizers import Adam, Adadelta, SGD
-from tensorflow.keras.callbacks import ModelCheckpoint
+from tensorflow.keras.callbacks import ModelCheckpoint, LearningRateScheduler
 from tensorflow.keras import layers
 from tensorflow.keras import Input
 from tensorflow.keras.layers import Dense, Activation, Dropout
@@ -507,7 +507,7 @@ class KerasMultiInput(BaseEstimator, ClassifierMixin):
         val_values = {c:self.X_valid[c] for c in self.categorical_columns}
         val_values['continuouse'] = self.X_valid[self.non_categorical_columns]
         val_values['rnn_input'] = self.ts_valid
-        lrate = K.callbacks.LearningRateScheduler(self.step_decay, verbose=2)
+        lrate = LearningRateScheduler(self.step_decay, verbose=2)
         
         history = self.model.fit(train_values, self.y_train, epochs=self.epochs, batch_size = self.batch_size,
                                      validation_data=(val_values, self.y_valid), 
@@ -593,7 +593,7 @@ if __name__ == "__main__":
                      "apparentTemperatureMaxTime",
                      "apparentTemperatureLowTime"], axis = 1)
     
-    logger.info(df.head())
+    logger.info(df.head().T)
     try:
         keras_multinput = KerasMultiInput(logger=logger, verbose=2, batch_size=2000, epochs=90, lr=0.0001, l2_reg=0.05, sequence_length =5)
         keras_multinput.find_categorical(df)
@@ -614,6 +614,8 @@ if __name__ == "__main__":
         lclid_test = list( [ lclids[i] for i in sorted(random.sample(range(len(lclids)), 4)) ])
         colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
         for lclid, clr in zip(lclid_test, colors[:len(lclid_test)]):
+            if not (lclid in X_valid.index  and lclid in X_train.index):
+                continue
             logger.info(f'Predicting values for LCLID: {lclid}')
             X = X_train.loc[lclid,:]
             if(len(X) > 0):
