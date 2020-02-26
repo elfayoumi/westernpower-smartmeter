@@ -1,4 +1,3 @@
-library(Rtsne)
 library(data.table)
 library(dplyr)
 library(tidyr)
@@ -100,13 +99,23 @@ write_feather(uk_bank_holidays, 'data/uk_bank_holidays.feather')
 write_feather(weather_daily_darksky, 'data/weather_daily_darksky.feather')
 write_feather(weather_hourly_darksky, 'data/weather_hourly_darksky.feather')
 
+  
+    daily.data = setDT( read_feather('data/daily_data.feather'))
+    halfhourly.data = setDT( read_feather('data/halfhourly_data.feather'))
+    hhblock.data = setDT( read_feather('data/hhblock_data.feather'))
+    uk_bank_holidays= setDT( read_feather('data/uk_bank_holidays.feather'))
+    weather_daily_darksky = setDT( read_feather('data/weather_daily_darksky.feather'))
+    weather_hourly_darksky = setDT( read_feather( 'data/weather_hourly_darksky.feather'))
+  
+  hourly.total = merge(halfhourly.data , weather_hourly_darksky, by.x = 'tstp', by.y='time')
+  hourly.total = hourly.total[order(LCLid, tstp)]
+  hourly.total = hourly.total[,Date:=NULL]
+  glimpse(hourly.total)
+  
+  write_feather(hourly.total , 'data/hourly_total.feather')
 
-daily.data = setDT( read_feather('data/daily_data.feather'))
-halfhourly.data = setDT( read_feather('data/halfhourly_data.feather'))
-hhblock.data = setDT( read_feather('data/hhblock_data.feather'))
-uk_bank_holidays= setDT( read_feather('data/uk_bank_holidays.feather'))
-weather_daily_darksky = setDT( read_feather('data/weather_daily_darksky.feather'))
-weather_hourly_darksky = setDT( read_feather( 'data/weather_hourly_darksky.feather'))
+
+
 
 house_hold_information = read.csv('data/informations_households.csv')
 acorn = read.csv('data/acorn_details.csv')
