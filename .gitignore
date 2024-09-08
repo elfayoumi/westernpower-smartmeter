@@ -1,0 +1,14 @@
+smart-meters-in-london/*
+.ipynb_checkpoints/*
+logging/*
+.vscode/*
+/data/*
+.Rproj.user
+/.RDataTmp
+nn_input.csv
+__pycache__/
+/.Rhistory
+*.orig
+.RData
+.idea/*
+dask-worker-space/*
