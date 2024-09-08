@@ -11,3 +11,4 @@ __pycache__/
 *.orig
 .RData
 .idea/*
+dask-worker-space/*
