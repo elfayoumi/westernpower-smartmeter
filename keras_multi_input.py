@@ -604,7 +604,7 @@ if __name__ == "__main__":
         X_train, ts_train, y_train, X_valid, ts_valid, y_valid = keras_multinput.load_pickled_data()
         logger.info(X_train.head())
         keras_multinput.model_setup()
-        #keras_multinput.fit_data(show_figures=True)
+        keras_multinput.fit_data(show_figures=True)
         keras_multinput.load_model()
         ts_valid = pd.DataFrame(ts_valid.reshape(-1, keras_multinput.window_size), index=X_valid.index)
         ts_train = pd.DataFrame(ts_train.reshape(-1, keras_multinput.window_size), index=X_train.index)
@@ -645,11 +645,11 @@ if __name__ == "__main__":
         plt.show()
 
 
-        # predict_y_train =  keras_multinput.unscale_y_value(keras_multinput.predict(X_train,ts_train.values.reshape(-1, keras_multinput.window_size,keras_multinput.D)).reshape(-1,1))
-        # predict_y_valid =  keras_multinput.unscale_y_value(keras_multinput.predict(X_valid,ts_valid.values.reshape(-1, keras_multinput.window_size,keras_multinput.D)).reshape(-1,1))
+        predict_y_train =  keras_multinput.unscale_y_value(keras_multinput.predict(X_train,ts_train.values.reshape(-1, keras_multinput.window_size,keras_multinput.D)).reshape(-1,1))
+        predict_y_valid =  keras_multinput.unscale_y_value(keras_multinput.predict(X_valid,ts_valid.values.reshape(-1, keras_multinput.window_size,keras_multinput.D)).reshape(-1,1))
 
-        # pickle.dump( predict_y_train, open( os.path.join('./data', 'predict_y_train.pickle'), "wb" ) )
-        # pickle.dump( predict_y_valid, open( os.path.join('./data', 'predict_y_valid.pickle'), "wb" ) )
+        pickle.dump( predict_y_train, open( os.path.join('./data', 'predict_y_train.pickle'), "wb" ) )
+        pickle.dump( predict_y_valid, open( os.path.join('./data', 'predict_y_valid.pickle'), "wb" ) )
         yy =pickle.load(open( os.path.join('./data', 'predict_y_train.pickle'), "rb" ) )
         predict_y_train = pd.DataFrame(yy, columns = ['Predicted'], index = X_train.index)
         predict_y_train['Real'] = keras_multinput.unscale_y_value(y_train)
